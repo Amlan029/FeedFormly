@@ -2,10 +2,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/options";
 import dbConnect from "@/lib/dbConnect";
 import UserModel from "@/model/User";
+import { NextRequest } from 'next/server';
 import { User } from "next-auth";
 
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: { messageid: string } }
 ) {
   const messageId = params.messageid;
