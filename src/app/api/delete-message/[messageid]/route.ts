@@ -7,9 +7,9 @@ import { User } from "next-auth";
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { messageid: string } }
+  context: { params: Promise<{ messageid: string }> }
 ) {
-  const messageId = params.messageid;
+  const { messageid } = await context.params; // ✅ await the params properly
   await dbConnect();
 
   const session = await getServerSession(authOptions);
@@ -17,10 +17,7 @@ export async function DELETE(
 
   if (!session || !user) {
     return NextResponse.json(
-      {
-        success: false,
-        message: "Not Authenticated",
-      },
+      { success: false, message: "Not Authenticated" },
       { status: 401 }
     );
   }
@@ -28,33 +25,24 @@ export async function DELETE(
   try {
     const updatedResult = await UserModel.updateOne(
       { _id: user._id },
-      { $pull: { messages: { _id: messageId } } }
+      { $pull: { messages: { _id: messageid } } }
     );
 
     if (updatedResult.modifiedCount === 0) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Message not found or already deleted",
-        },
+        { success: false, message: "Message not found or already deleted" },
         { status: 404 }
       );
     }
 
     return NextResponse.json(
-      {
-        success: true,
-        message: "Message deleted",
-      },
+      { success: true, message: "Message deleted" },
       { status: 200 }
     );
   } catch (error) {
     console.error("Error in delete message route:", error);
     return NextResponse.json(
-      {
-        success: false,
-        message: "Error deleting message",
-      },
+      { success: false, message: "Error deleting message" },
       { status: 500 }
     );
   }
