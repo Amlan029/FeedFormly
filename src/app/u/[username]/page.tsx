@@ -1,16 +1,14 @@
 "use client";
+
 import React, { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { messageSchema } from "@/schemas/messageSchema";
 import z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useCompletion } from '@ai-sdk/react'
-
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -27,82 +25,114 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import Link from "next/link";
 
-
-const specialChar = '||';
-
-const initialMessageString =
-  "What's your favorite movie?||Do you have any pets?||What's your dream job?";
+// ✅ Helper: clean and parse Gemini response into separate messages
 const parseStringMessages = (messageString: string): string[] => {
-  return messageString.split(specialChar);
+  if (!messageString) return [];
+
+  const cleaned = messageString
+    .replace(/^Here[\s\S]*?:/i, "") // remove Gemini's intro like "Here are three..."
+    .trim();
+
+  if (cleaned.includes("||")) {
+    return cleaned
+      .split("||")
+      .map((msg) => msg.trim())
+      .filter(Boolean);
+  }
+
+  // fallback: split by numbered lists if Gemini uses "1. ", "2. ", etc.
+  return cleaned
+    .split(/\d+\.\s+/)
+    .map((msg) => msg.trim())
+    .filter(Boolean);
 };
 
-
-
-const page = () => {
+const Page = () => {
   const router = useRouter();
   const params = useParams<{ username: string }>();
-  const {
-    complete,
-    completion,
-    isLoading: isSuggestLoading,
-    error,
-  } = useCompletion({
-    api: '/api/suggest-messages',
-    initialCompletion: initialMessageString,
-  });
+
+  // ✅ your form setup (unchanged)
   const form = useForm<z.infer<typeof messageSchema>>({
     resolver: zodResolver(messageSchema),
     defaultValues: {
       content: "",
     },
   });
-  const handleMessageClick = (message: string) => {
-    form.setValue('content', message);
-  };
-  const messageContent = form.watch("content");
+
   const [isLoading, setIsLoading] = useState(false);
+  const [isSuggestLoading, setIsSuggestLoading] = useState(false);
+  const [suggestedMessages, setSuggestedMessages] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const messageContent = form.watch("content");
+
+  // ✅ Suggest Messages: calls your Gemini backend
+  const fetchSuggestedMessages = async () => {
+    setIsSuggestLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/suggest-messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "" }),
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch suggestions");
+
+      const text = await res.text();
+      const parsed = parseStringMessages(text);
+
+      if (parsed.length === 0) {
+        toast.error("No suggestions returned from Gemini");
+      } else {
+        setSuggestedMessages(parsed);
+      }
+    } catch (err) {
+      console.error("Suggestion fetch error:", err);
+      setError("Failed to load suggestions");
+    } finally {
+      setIsSuggestLoading(false);
+    }
+  };
+
+  // ✅ Send message form submission
   const onSubmit = async (data: z.infer<typeof messageSchema>) => {
     setIsLoading(true);
     try {
       const response = await axios.post("/api/send-message", {
-        //code to get username from params
         username: params.username,
         content: data.content,
       });
       toast.success(`Success: ${response.data.message}`);
       form.reset({ ...form.getValues(), content: "" });
-      // router.replace("sign-in");
     } catch (error) {
       const axiosError = error as AxiosError<ApiResponse>;
-
-  if (axiosError.response?.status === 403) {
-    // graceful handling
-    toast.error("This user is not accepting messages right now.");
-  } else {
-    const errorMSG =
-      axiosError.response?.data?.message || "Failed to send message";
-    toast.error(errorMSG);
-  }
-      
+      if (axiosError.response?.status === 403) {
+        toast.error("This user is not accepting messages right now.");
+      } else {
+        const errorMSG =
+          axiosError.response?.data?.message || "Failed to send message";
+        toast.error(errorMSG);
+      }
     } finally {
       setIsLoading(false);
     }
   };
-  const fetchSuggestedMessages = async () => {
-    try {
-      complete('');
-    } catch (error) {
-      console.error('Error fetching messages:', error);
-      // Handle error appropriately
-    }
+
+  // ✅ On-click to fill message from suggestions
+  const handleMessageClick = (message: string) => {
+    form.setValue("content", message);
   };
+
   return (
     <div className="flex flex-col justify-center items-center ">
-      <div className="w-full flex  flex-col justify-center p-5 items-center">
+      <div className="w-full flex flex-col justify-center p-5 items-center">
         <h1 className="text-3xl font-bold tracking-tight lg:text-5xl text-center">
           Public Profile Link
         </h1>
       </div>
+
+      {/* ✅ your form (unchanged) */}
       <Form {...form}>
         <form
           onSubmit={form.handleSubmit(onSubmit)}
@@ -114,22 +144,20 @@ const page = () => {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>
-                  Send Annonymous message to @{params.username}
+                  Send Anonymous message to @{params.username}
                 </FormLabel>
                 <FormControl>
                   <Textarea
-                    placeholder="Type your annonymous message"
+                    placeholder="Type your anonymous message"
                     className="resize-none"
                     {...field}
                   />
                 </FormControl>
-                {/* <FormDescription>
-                You can <span>@mention</span> other users and organizations.
-              </FormDescription> */}
                 <FormMessage />
               </FormItem>
             )}
           />
+
           <div className="flex justify-center">
             {isLoading ? (
               <Button disabled>
@@ -137,13 +165,15 @@ const page = () => {
                 Please wait
               </Button>
             ) : (
-              <Button type="submit" disabled={isLoading || !messageContent}>
+              <Button type="submit" disabled={!messageContent}>
                 Send It
               </Button>
             )}
           </div>
         </form>
       </Form>
+
+      {/* ✅ Suggested Messages Section */}
       <div className="space-y-4 my-8">
         <div className="space-y-2">
           <Button
@@ -151,36 +181,43 @@ const page = () => {
             className="my-4"
             disabled={isSuggestLoading}
           >
-            Suggest Messages
+            {isSuggestLoading ? "Loading..." : "Suggest Messages"}
           </Button>
           <p>Click on any message below to select it.</p>
         </div>
+
         <Card>
           <CardHeader>
             <h3 className="text-xl font-semibold">Messages</h3>
           </CardHeader>
           <CardContent className="flex flex-col space-y-4">
-            {error ? (
-              <p className="text-red-500">{error.message}</p>
-            ) : (
-              parseStringMessages(completion).map((message, index) => (
+            {error && <p className="text-red-500">{error}</p>}
+
+            {suggestedMessages.length > 0 ? (
+              suggestedMessages.map((message, index) => (
                 <Button
                   key={index}
                   variant="outline"
-                  className="mb-2"
+                  className="mb-2 text-left"
                   onClick={() => handleMessageClick(message)}
                 >
                   {message}
                 </Button>
               ))
+            ) : (
+              <p className="text-gray-500 text-sm">
+                Click "Suggest Messages" to get ideas.
+              </p>
             )}
           </CardContent>
         </Card>
       </div>
+
       <Separator className="my-6" />
+
       <div className="text-center">
         <div className="mb-4">Get Your Message Board</div>
-        <Link href={'/sign-up'}>
+        <Link href={"/sign-up"}>
           <Button>Create Your Account</Button>
         </Link>
       </div>
@@ -188,4 +225,4 @@ const page = () => {
   );
 };
 
-export default page;
+export default Page;

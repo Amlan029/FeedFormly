@@ -1,29 +1,54 @@
-import { streamText } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
-import { NextResponse } from "next/server";
-
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+import { NextRequest } from "next/server";
 
 export const runtime = "edge";
 
-export async function POST(req: Request) {
+const API_KEY = process.env.GEMINI_API_KEY!;
+const MODEL = "models/gemini-2.0-flash-lite-001"; // ✅ confirmed model for your key
+
+export async function POST(req: NextRequest) {
   try {
-    const prompt =
-      "Create a list of three open-ended and engaging questions formatted as a single string. Each question should be separated by '||'. These questions are for an anonymous social messaging platform, like Qooh.me, and should be suitable for a diverse audience. Avoid personal or sensitive topics, focusing instead on universal themes that encourage friendly interaction. For example, your output should be structured like this: 'What’s a hobby you’ve recently started?||If you could have dinner with any historical figure, who would it be?||What’s a simple thing that makes you happy?'. Ensure the questions are intriguing, foster curiosity, and contribute to a positive and welcoming conversational environment.";
+    const { prompt } = await req.json().catch(() => ({ prompt: "" }));
+    const finalPrompt =
+      prompt?.trim() ||
+      "Suggest 3 friendly anonymous messages separated by ||";
 
-    const result = await streamText({
-      model: openai("gpt-3.5-turbo"), // ✅ cleaner, no `new OpenAI()`
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    return result.toUIMessageStreamResponse(); // ✅ built-in helper
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    return NextResponse.json(
-      { error: "Unexpected server error" },
-      { status: 500 }
+    // Call Gemini REST API (v1)
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1/${MODEL}:generateContent?key=${API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: finalPrompt }],
+            },
+          ],
+        }),
+      }
     );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Gemini API error:", data);
+      return new Response("Error getting Gemini response", { status: 500 });
+    }
+
+    // Extract and clean text
+    const rawText =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
+      "No response generated.";
+
+    // Remove intro like "Here are three friendly..." if Gemini adds it
+    const cleanedText = rawText.replace(/^Here[\s\S]*?:/i, "").trim();
+
+    return new Response(cleanedText, {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  } catch (error) {
+    console.error("Gemini backend error:", error);
+    return new Response("Error getting Gemini response", { status: 500 });
   }
 }
